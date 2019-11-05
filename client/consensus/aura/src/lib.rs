@@ -365,6 +365,10 @@ fn find_pre_digest<B: BlockT, P: Pair>(header: &B::Header) -> Result<u64, Error<
 		P::Signature: Decode,
 		P::Public: Encode + Decode + PartialEq + Clone,
 {
+	if header.number().is_zero() {
+		return Ok(0);
+	}
+
 	let mut pre_digest: Option<u64> = None;
 	for log in header.digest().logs() {
 		trace!(target: "aura", "Checking log {:?}", log);
