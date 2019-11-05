@@ -56,9 +56,9 @@ macro_rules! new_full_start {
 						client.clone(), &*client, select_chain
 					)?;
 
-				let import_queue = aura::import_queue::<_, _, AuraPair, _>(
+				let import_queue = aura::import_queue::<_, _, _, AuraPair, _>(
 					aura::SlotDuration::get_or_compute(&*client)?,
-					Box::new(grandpa_block_import.clone()),
+					grandpa_block_import.clone(),
 					Some(Box::new(grandpa_block_import.clone())),
 					None,
 					client,
@@ -218,9 +218,9 @@ pub fn new_light<C: Send + Default + 'static>(config: Configuration<C, GenesisCo
 			let finality_proof_request_builder =
 				finality_proof_import.create_finality_proof_request_builder();
 
-			let import_queue = aura::import_queue::<_, _, AuraPair, ()>(
+			let import_queue = aura::import_queue::<_, _, _, AuraPair, ()>(
 				aura::SlotDuration::get_or_compute(&*client)?,
-				Box::new(grandpa_block_import),
+				grandpa_block_import,
 				None,
 				Some(Box::new(finality_proof_import)),
 				client,
