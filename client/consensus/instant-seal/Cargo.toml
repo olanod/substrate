@@ -1,0 +1,48 @@
+[package]
+name = "substrate-consensus-instant-seal"
+version = "2.0.0"
+authors = ["Parity Technologies <admin@parity.io>"]
+description = "Instant sealing engine for Substrate"
+edition = "2018"
+
+[dependencies]
+codec = { package = "parity-scale-codec", version = "1.0.0", features = ["derive"] }
+num-bigint = "0.2.3"
+num-rational = "0.2.2"
+num-traits = "0.2.8"
+futures-preview = "0.3.0-alpha.19"
+futures-timer = "0.4.0"
+parking_lot = "0.9.0"
+log = "0.4.8"
+rand = "0.7.2"
+
+app-crypto = { package = "substrate-application-crypto", path = "../../../primitives/application-crypto" }
+runtime-support = { package = "paint-support", path = "../../../paint/support" }
+runtime-version = { package = "sr-version", path = "../../../primitives/sr-version" }
+runtime-io = { package = "sr-io", path = "../../../primitives/sr-io" }
+inherents = { package = "substrate-inherents", path = "../../../primitives/inherents" }
+substrate-telemetry = { path = "../../../client/telemetry" }
+keystore = { package = "substrate-keystore", path = "../../../client/keystore" }
+client = { package = "substrate-client", path = "../../../client" }
+sr-api = { path = "../../../primitives/sr-api" }
+block-builder-api = { package = "substrate-block-builder-runtime-api", path = "../../../primitives/block-builder/runtime-api" }
+header-metadata = { package = "substrate-header-metadata", path = "../../../client/header-metadata" }
+consensus-common = { package = "substrate-consensus-common", path = "../../../primitives/consensus/common" }
+slots = { package = "substrate-consensus-slots", path = "../../../client/consensus/slots"  }
+sr-primitives = {  path = "../../../primitives/sr-primitives" }
+fork-tree = { path = "../../../utils/fork-tree" }
+transaction-pool = { package = "substrate-transaction-pool", path = "../../../client/transaction-pool" }
+
+[dev-dependencies]
+keyring = { package = "substrate-keyring", path = "../../../primitives/keyring" }
+substrate-executor = { path = "../../../client/executor" }
+network = { package = "substrate-network", path = "../../../client/network", features = ["test-helpers"]}
+service = { package = "substrate-service", path = "../../../client/service" }
+test-client = { package = "substrate-test-runtime-client", path = "../../../test/utils/runtime/client" }
+block-builder = { package = "substrate-block-builder", path = "../../../client/block-builder" }
+tokio = "0.1.22"
+env_logger = "0.7.0"
+tempfile = "3.1.0"
+
+[features]
+test-helpers = []

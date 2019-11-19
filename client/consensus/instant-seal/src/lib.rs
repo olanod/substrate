@@ -19,20 +19,18 @@
 
 use consensus_common::{
 	self, BlockImport, Environment, Proposer, BlockCheckParams,
-	ForkChoiceStrategy, BlockImportParams, BlockOrigin, Error as ConsensusError,
-	ImportResult, SyncOracle, SelectChain,
+	ForkChoiceStrategy, BlockImportParams, BlockOrigin,
+	ImportResult, SelectChain,
 };
 use consensus_common::import_queue::{BasicQueue, CacheKeyId, Verifier, BoxBlockImport};
-use sr_primitives::traits::{Block as BlockT, Header as HeaderT};
+use sr_primitives::traits::{Block as BlockT};
 use sr_primitives::Justification;
-use slots::{SimpleSlotWorker, SlotWorker};
 use parking_lot::Mutex;
 use futures::prelude::*;
 use transaction_pool::txpool::{self, Pool as TransactionPool};
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use futures::AsyncWriteExt;
 use std::time::Duration;
 
 /// The synchronous block-import worker of the engine.
@@ -107,7 +105,7 @@ pub fn import_queue<B: BlockT>(block_import: BoxBlockImport<B>) -> BasicQueue<B>
 /// Creates the background authorship task for the instant seal engine.
 pub async fn run_instant_seal<B, E, A, C>(
 	block_import: BoxBlockImport<B>,
-	mut env: E,
+	env: E,
 	pool: Arc<TransactionPool<A>>,
 	select_chain: C,
 	inherent_data_providers: inherents::InherentDataProviders,
@@ -130,15 +128,15 @@ pub async fn run_instant_seal<B, E, A, C>(
 			let env = env.clone();
 			let inherent_data_providers = inherent_data_providers.clone();
 			let block_import = block_import.clone();
-			
+
 			async move {
 				let best_block_header = match select_chain.clone().best_chain() {
-					Err(e) => return,
+					Err(_) => return,
 					Ok(best) => best,
 				};
 
 				let mut proposer = match env.clone().lock().init(&best_block_header) {
-					Err(e) => return,
+					Err(_) => return,
 					Ok(p) => p,
 				};
 
