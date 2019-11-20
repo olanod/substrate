@@ -47,8 +47,7 @@ impl<I> From<I> for InstantSealBlockImport<I> {
 impl<B: BlockT, I: BlockImport<B>> BlockImport<B> for InstantSealBlockImport<I> {
 	type Error = I::Error;
 
-	fn check_block(&mut self, block: BlockCheckParams<B>)
-	               -> Result<ImportResult, Self::Error>
+	fn check_block(&mut self, block: BlockCheckParams<B>) -> Result<ImportResult, Self::Error>
 	{
 		self.inner.check_block(block)
 	}
@@ -109,7 +108,7 @@ pub async fn run_instant_seal<B, E, A, C>(
 	pool: Arc<TransactionPool<A>>,
 	select_chain: C,
 	inherent_data_providers: inherents::InherentDataProviders,
-) -> ()
+)
 	where
 		B: BlockT + 'static,
 		E: Environment<B> + 'static,
@@ -120,6 +119,7 @@ pub async fn run_instant_seal<B, E, A, C>(
 	let env = Arc::new(Mutex::new(env));
 	let select_chain = Arc::new(select_chain);
 	let inherent_data_providers = Arc::new(inherent_data_providers);
+	let moved_pool = pool.clone();
 
 	// propose a new block everytime a transaction is imported
 	pool.import_notification_stream()
@@ -128,8 +128,14 @@ pub async fn run_instant_seal<B, E, A, C>(
 			let env = env.clone();
 			let inherent_data_providers = inherent_data_providers.clone();
 			let block_import = block_import.clone();
+			let moved_pool = moved_pool.clone();
 
 			async move {
+				// prev
+				if moved_pool.status().ready == 0 {
+					return
+				}
+
 				let best_block_header = match select_chain.clone().best_chain() {
 					Err(_) => return,
 					Ok(best) => best,
@@ -177,7 +183,6 @@ pub async fn run_instant_seal<B, E, A, C>(
 						log::warn!("Failed to propose block: {:?}", e)
 					}
 				};
-				()
 			}
 		}).await
 }
