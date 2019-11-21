@@ -33,18 +33,21 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+pub mod rpc;
+use rpc::EngineCommand;
+
 /// The synchronous block-import worker of the engine.
-pub struct InstantSealBlockImport<I> {
+pub struct ManualSealBlockImport<I> {
 	inner: I,
 }
 
-impl<I> From<I> for InstantSealBlockImport<I> {
+impl<I> From<I> for ManualSealBlockImport<I> {
 	fn from(i: I) -> Self {
-		InstantSealBlockImport { inner: i }
+		ManualSealBlockImport { inner: i }
 	}
 }
 
-impl<B: BlockT, I: BlockImport<B>> BlockImport<B> for InstantSealBlockImport<I> {
+impl<B: BlockT, I: BlockImport<B>> BlockImport<B> for ManualSealBlockImport<I> {
 	type Error = I::Error;
 
 	fn check_block(&mut self, block: BlockCheckParams<B>) -> Result<ImportResult, Self::Error>
@@ -63,10 +66,10 @@ impl<B: BlockT, I: BlockImport<B>> BlockImport<B> for InstantSealBlockImport<I> 
 	}
 }
 
-/// The verifier for the instant seal engine; instantly finalizes.
-struct InstantSealVerifier;
+/// The verifier for the manual seal engine; instantly finalizes.
+struct ManualSealVerifier;
 
-impl<B: BlockT> Verifier<B> for InstantSealVerifier {
+impl<B: BlockT> Verifier<B> for ManualSealVerifier {
 	fn verify(
 		&mut self,
 		origin: BlockOrigin,
@@ -90,22 +93,23 @@ impl<B: BlockT> Verifier<B> for InstantSealVerifier {
 	}
 }
 
-/// Instantiate the import queue for the instant-seal consensus engine.
+/// Instantiate the import queue for the manual seal consensus engine.
 pub fn import_queue<B: BlockT>(block_import: BoxBlockImport<B>) -> BasicQueue<B>
 {
 	BasicQueue::new(
-		InstantSealVerifier,
+		ManualSealVerifier,
 		block_import,
 		None,
 		None,
 	)
 }
 
-/// Creates the background authorship task for the instant seal engine.
-pub async fn run_instant_seal<B, E, A, C>(
+/// Creates the background authorship task for the manual seal engine.
+pub async fn run_manual_seal<B, E, A, C, S>(
 	block_import: BoxBlockImport<B>,
 	env: E,
 	pool: Arc<TransactionPool<A>>,
+	seal_block_channel: S,
 	select_chain: C,
 	inherent_data_providers: inherents::InherentDataProviders,
 )
@@ -113,6 +117,7 @@ pub async fn run_instant_seal<B, E, A, C>(
 		B: BlockT + 'static,
 		E: Environment<B> + 'static,
 		A: txpool::ChainApi + 'static,
+		S: Stream<Item=EngineCommand> + 'static,
 		C: SelectChain<B> + 'static,
 {
 	let block_import = Arc::new(Mutex::new(block_import));
@@ -121,9 +126,8 @@ pub async fn run_instant_seal<B, E, A, C>(
 	let inherent_data_providers = Arc::new(inherent_data_providers);
 	let moved_pool = pool.clone();
 
-	// propose a new block everytime a transaction is imported
-	pool.import_notification_stream()
-		.for_each(move |_| {
+	seal_block_channel
+		.for_each(move |command| {
 			let select_chain = select_chain.clone();
 			let env = env.clone();
 			let inherent_data_providers = inherent_data_providers.clone();
@@ -131,58 +135,64 @@ pub async fn run_instant_seal<B, E, A, C>(
 			let moved_pool = moved_pool.clone();
 
 			async move {
-				// prev
-				if moved_pool.status().ready == 0 {
-					return
-				}
+				match command {
+					EngineCommand::SealNewBlock { force} => {
+						if moved_pool.status().ready == 0 && !force {
+							return
+						}
 
-				let best_block_header = match select_chain.clone().best_chain() {
-					Err(_) => return,
-					Ok(best) => best,
-				};
-
-				let mut proposer = match env.clone().lock().init(&best_block_header) {
-					Err(_) => return,
-					Ok(p) => p,
-				};
-
-				let id = match inherent_data_providers.clone().create_inherent_data() {
-					Err(_) => return,
-					Ok(id) => id,
-				};
-
-				let result = proposer.propose(
-					id,
-					Default::default(),
-					Duration::from_secs(5),
-				).await;
-
-				match result {
-					Ok(block) => {
-						let (header, body) = block.deconstruct();
-						let import_params = BlockImportParams {
-							origin: BlockOrigin::Own,
-							header,
-							justification: None,
-							post_digests: Vec::new(),
-							body: Some(body),
-							finalized: true,
-							auxiliary: Vec::new(),
-							fork_choice: ForkChoiceStrategy::LongestChain,
-							allow_missing_state: false,
+						let best_block_header = match select_chain.clone()
+							.best_chain() {
+							Err(_) => return,
+							Ok(best) => best,
 						};
 
-						let res = block_import.clone()
-							.lock()
-							.import_block(import_params, HashMap::new());
-						if let Err(e) = res {
-							log::warn!("Failed to import just-constructed block: {:?}", e);
-						}
+						let mut proposer = match env.clone().lock().init(&best_block_header) {
+							Err(_) => return,
+							Ok(p) => p,
+						};
+
+						let id = match inherent_data_providers.clone()
+							.create_inherent_data() {
+							Err(_) => return,
+							Ok(id) => id,
+						};
+
+						let result = proposer.propose(
+							id,
+							Default::default(),
+							Duration::from_secs(5),
+						).await;
+
+						match result {
+							Ok(block) => {
+								let (header, body) = block.deconstruct();
+								let import_params = BlockImportParams {
+									origin: BlockOrigin::Own,
+									header,
+									justification: None,
+									post_digests: Vec::new(),
+									body: Some(body),
+									finalized: true,
+									auxiliary: Vec::new(),
+									fork_choice: ForkChoiceStrategy::LongestChain,
+									allow_missing_state: false,
+								};
+
+								let res = block_import.clone()
+									.lock()
+									.import_block(import_params, HashMap::new());
+								if let Err(e) = res {
+									log::warn!("Failed to import just-constructed block: {:?}", e);
+								}
+							}
+							Err(e) => {
+								log::warn!("Failed to propose block: {:?}", e)
+							}
+						};
 					}
-					Err(e) => {
-						log::warn!("Failed to propose block: {:?}", e)
-					}
-				};
+					_ => unreachable!() // for now
+				}
 			}
 		}).await
 }
