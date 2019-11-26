@@ -15,51 +15,66 @@
 // along with Substrate.  If not, see <http://www.gnu.org/licenses/>.
 
 //! RPC interface for the ManualSeal Engine.
-use jsonrpc_core::{Result};
+use jsonrpc_core::{Result, Error, ErrorCode};
 use jsonrpc_derive::rpc;
 use futures::channel::mpsc;
 
 /// The "engine" receives these messages over a channel
-pub enum EngineCommand {
+pub enum EngineCommand<Hash> {
 	/// Tells the engine to propose a new block
 	///
-	/// if force == true, it will create empty blocks.
+	/// if create_empty == true, it will create empty blocks if there are no transactions
+	/// in the transaction pool
 	SealNewBlock {
-		force: bool
-	},
-	/// Tells the engine to create a fork
-	///
-	/// TODO: implement CreateFork message handling
-	CreateFork
+		create_empty: bool,
+		parent_hash: Option<Hash>
+	}
 }
 
 #[rpc]
-pub trait ManualSealApi {
+pub trait ManualSealApi<Hash> {
 	#[rpc(name = "engine_createBlock")]
 	fn create_block(
 		&self,
-		force: bool,
+		create_empty: bool,
+		parent_hash: Option<Hash>
 	) -> Result<()>;
 }
 
 /// A struct that implements the [`ManualSealApi`].
-pub struct ManualSeal {
-	import_block_channel: mpsc::UnboundedSender<EngineCommand>,
+pub struct ManualSeal<Hash> {
+	import_block_channel: mpsc::UnboundedSender<EngineCommand<Hash>>,
 }
 
-impl ManualSeal {
+impl<Hash> ManualSeal<Hash> {
 	/// Create new `ManualSeal` with the given reference to the client.
-	pub fn new(import_block_channel: mpsc::UnboundedSender<EngineCommand>) -> Self {
+	pub fn new(import_block_channel: mpsc::UnboundedSender<EngineCommand<Hash>>) -> Self {
 		Self { import_block_channel }
 	}
 }
 
-impl ManualSealApi for ManualSeal {
+impl<Hash: Send + 'static> ManualSealApi<Hash> for ManualSeal<Hash> {
 	fn create_block(
 		&self,
-		force: bool,
+		create_empty: bool,
+		parent_hash: Option<Hash>
 	) -> Result<()> {
-		let _ = self.import_block_channel.unbounded_send(EngineCommand::SealNewBlock { force });
+		self.import_block_channel.unbounded_send(
+			EngineCommand::SealNewBlock {
+				create_empty,
+				parent_hash
+			}
+		).map_err(|err| {
+			if err.is_disconnected() {
+				log::warn!("Received sealing request but Manual Sealing task has been dropped");
+			}
+
+			Error {
+				code: ErrorCode::ServerError(500),
+				message: "Server is shutting down".into(),
+				data: None
+			}
+		})?;
 		Ok(())
 	}
 }
