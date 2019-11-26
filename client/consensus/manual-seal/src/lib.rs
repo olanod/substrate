@@ -14,8 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with Substrate.  If not, see <http://www.gnu.org/licenses/>.
 
-//! An instant sealing engine: we always author on every slot, and accept all blocks.
-//! This is suitable for single-node development environments.
+//! A manual sealing engine: the engine listens for rpc calls to seal blocks and create forks
+//! This is suitable for a testing environment.
 
 use consensus_common::{
 	self, BlockImport, Environment, Proposer, BlockCheckParams,
@@ -117,7 +117,7 @@ pub async fn run_manual_seal<B, E, A, C, S>(
 		B: BlockT + 'static,
 		E: Environment<B> + 'static,
 		A: txpool::ChainApi + 'static,
-		S: Stream<Item=EngineCommand> + 'static,
+		S: Stream<Item=EngineCommand<<B as BlockT>::Hash>> + 'static,
 		C: SelectChain<B> + 'static,
 {
 	let block_import = Arc::new(Mutex::new(block_import));
@@ -136,24 +136,25 @@ pub async fn run_manual_seal<B, E, A, C, S>(
 
 			async move {
 				match command {
-					EngineCommand::SealNewBlock { force} => {
-						if moved_pool.status().ready == 0 && !force {
+					EngineCommand::SealNewBlock {
+						create_empty,
+						parent_hash: _
+					} => {
+						if moved_pool.status().ready == 0 && !create_empty {
 							return
 						}
 
-						let best_block_header = match select_chain.clone()
-							.best_chain() {
+						let best_block_header = match select_chain.best_chain() {
 							Err(_) => return,
 							Ok(best) => best,
 						};
 
-						let mut proposer = match env.clone().lock().init(&best_block_header) {
+						let mut proposer = match env.lock().init(&best_block_header) {
 							Err(_) => return,
 							Ok(p) => p,
 						};
 
-						let id = match inherent_data_providers.clone()
-							.create_inherent_data() {
+						let id = match inherent_data_providers.create_inherent_data() {
 							Err(_) => return,
 							Ok(id) => id,
 						};
@@ -179,8 +180,7 @@ pub async fn run_manual_seal<B, E, A, C, S>(
 									allow_missing_state: false,
 								};
 
-								let res = block_import.clone()
-									.lock()
+								let res = block_import.lock()
 									.import_block(import_params, HashMap::new());
 								if let Err(e) = res {
 									log::warn!("Failed to import just-constructed block: {:?}", e);
@@ -191,7 +191,6 @@ pub async fn run_manual_seal<B, E, A, C, S>(
 							}
 						};
 					}
-					_ => unreachable!() // for now
 				}
 			}
 		}).await
