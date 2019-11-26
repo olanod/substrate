@@ -17,7 +17,7 @@ log = "0.4.8"
 rand = "0.7.2"
 
 app-crypto = { package = "substrate-application-crypto", path = "../../../primitives/application-crypto" }
-runtime-support = { package = "paint-support", path = "../../../paint/support" }
+runtime-support = { package = "frame-support", path = "../../../frame/support" }
 runtime-version = { package = "sr-version", path = "../../../primitives/sr-version" }
 runtime-io = { package = "sr-io", path = "../../../primitives/sr-io" }
 inherents = { package = "substrate-inherents", path = "../../../primitives/inherents" }
