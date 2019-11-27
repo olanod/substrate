@@ -24,6 +24,7 @@ use consensus_common::{
 };
 use consensus_common::import_queue::{BasicQueue, CacheKeyId, Verifier, BoxBlockImport};
 use sr_primitives::traits::{Block as BlockT};
+use client::blockchain::HeaderBackend;
 use sr_primitives::Justification;
 use parking_lot::Mutex;
 use futures::prelude::*;
@@ -35,6 +36,7 @@ use std::time::Duration;
 
 pub mod rpc;
 use rpc::EngineCommand;
+use sr_api::BlockId;
 
 /// The synchronous block-import worker of the engine.
 pub struct ManualSealBlockImport<I> {
@@ -105,9 +107,10 @@ pub fn import_queue<B: BlockT>(block_import: BoxBlockImport<B>) -> BasicQueue<B>
 }
 
 /// Creates the background authorship task for the manual seal engine.
-pub async fn run_manual_seal<B, E, A, C, S>(
+pub async fn run_manual_seal<B, HB, E, A, C, S>(
 	block_import: BoxBlockImport<B>,
 	env: E,
+	back_end: HB,
 	pool: Arc<TransactionPool<A>>,
 	seal_block_channel: S,
 	select_chain: C,
@@ -115,6 +118,7 @@ pub async fn run_manual_seal<B, E, A, C, S>(
 )
 	where
 		B: BlockT + 'static,
+		HB: HeaderBackend<B> + 'static,
 		E: Environment<B> + 'static,
 		A: txpool::ChainApi + 'static,
 		S: Stream<Item=EngineCommand<<B as BlockT>::Hash>> + 'static,
@@ -125,6 +129,7 @@ pub async fn run_manual_seal<B, E, A, C, S>(
 	let select_chain = Arc::new(select_chain);
 	let inherent_data_providers = Arc::new(inherent_data_providers);
 	let moved_pool = pool.clone();
+	let back_end = Arc::new(back_end);
 
 	seal_block_channel
 		.for_each(move |command| {
@@ -133,23 +138,36 @@ pub async fn run_manual_seal<B, E, A, C, S>(
 			let inherent_data_providers = inherent_data_providers.clone();
 			let block_import = block_import.clone();
 			let moved_pool = moved_pool.clone();
+			let back_end = back_end.clone();
 
 			async move {
 				match command {
 					EngineCommand::SealNewBlock {
 						create_empty,
-						parent_hash: _
+						parent_hash
 					} => {
 						if moved_pool.status().ready == 0 && !create_empty {
 							return
 						}
 
-						let best_block_header = match select_chain.best_chain() {
-							Err(_) => return,
-							Ok(best) => best,
+						// get the header to build this new block on
+						// use the parent_hash supplied via `EngineCommand`
+						// or fetch the best_block.
+						let header = parent_hash
+							.and_then(|hash| {
+								back_end.header(BlockId::Hash(hash)).ok()
+							})
+							.and_then(|header| {
+								header
+							})
+							.or_else(|| select_chain.best_chain().ok());
+
+						let header = match header {
+							None => return,
+							Some(hash) => hash,
 						};
 
-						let mut proposer = match env.lock().init(&best_block_header) {
+						let mut proposer = match env.lock().init(&header) {
 							Err(_) => return,
 							Ok(p) => p,
 						};
