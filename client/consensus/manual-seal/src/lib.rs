@@ -157,9 +157,7 @@ pub async fn run_manual_seal<B, HB, E, A, C, S>(
 							.and_then(|hash| {
 								back_end.header(BlockId::Hash(hash)).ok()
 							})
-							.and_then(|header| {
-								header
-							})
+							.and_then(std::convert::identity)
 							.or_else(|| select_chain.best_chain().ok());
 
 						let header = match header {
@@ -212,4 +210,41 @@ pub async fn run_manual_seal<B, HB, E, A, C, S>(
 				}
 			}
 		}).await
+}
+
+pub async fn run_instant_seal<B, HB, E, A, C, S>(
+	block_import: BoxBlockImport<B>,
+	env: E,
+	back_end: HB,
+	pool: Arc<TransactionPool<A>>,
+	select_chain: C,
+	inherent_data_providers: inherents::InherentDataProviders,
+)
+	where
+		B: BlockT + 'static,
+		HB: HeaderBackend<B> + 'static,
+		E: Environment<B> + 'static,
+		A: txpool::ChainApi + 'static,
+		S: Stream<Item=EngineCommand<<B as BlockT>::Hash>> + 'static,
+		C: SelectChain<B> + 'static
+{
+	// instant-seal creates blocks as soon as transactions are imported
+	// into the transaction pool.
+	let seal_block_channel = pool.import_notification_stream()
+		.map(|_| {
+			EngineCommand::SealNewBlock {
+				create_empty: false,
+				parent_hash: None
+			}
+		});
+
+	run_manual_seal(
+		block_import,
+		env,
+		back_end,
+		pool,
+		seal_block_channel,
+		select_chain,
+		inherent_data_providers
+	).await
 }
