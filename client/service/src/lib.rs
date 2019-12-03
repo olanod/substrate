@@ -49,13 +49,11 @@ use network::{
 use log::{log, warn, debug, error, Level};
 use codec::{Encode, Decode};
 use primitives::{Blake2Hasher, H256};
-use sr_primitives::generic::BlockId;
-use sr_primitives::traits::{NumberFor, Block as BlockT};
+use sp_runtime::generic::BlockId;
+use sp_runtime::traits::{NumberFor, Block as BlockT};
 
 pub use self::error::Error;
-pub use self::builder::{
-	ServiceBuilder, ServiceBuilderExport, ServiceBuilderImport, ServiceBuilderRevert,
-};
+pub use self::builder::{ServiceBuilder, ServiceBuilderCommand};
 pub use config::{Configuration, Roles, PruningMode};
 pub use chain_spec::{ChainSpec, Properties, RuntimeGenesis, Extension as ChainSpecExtension};
 pub use txpool_api::{TransactionPool, TransactionPoolMaintainer, InPoolTransaction, IntoPoolError};
@@ -524,7 +522,7 @@ fn start_rpc_servers<C, G, E, H: FnMut() -> rpc_servers::RpcHandler<rpc::Metadat
 				.or_else(|e| match e.kind() {
 					io::ErrorKind::AddrInUse |
 					io::ErrorKind::PermissionDenied => {
-						warn!("Unable to bind server to {}. Trying random port.", address);
+						warn!("Unable to bind RPC server to {}. Trying random port.", address);
 						address.set_port(0);
 						start(&address)
 					},
@@ -597,7 +595,7 @@ fn transactions_to_propagate<Pool, B, H, E>(pool: &Pool)
 where
 	Pool: TransactionPool<Block=B, Hash=H, Error=E>,
 	B: BlockT,
-	H: std::hash::Hash + Eq + sr_primitives::traits::Member + sr_primitives::traits::MaybeSerialize,
+	H: std::hash::Hash + Eq + sp_runtime::traits::Member + sp_runtime::traits::MaybeSerialize,
 	E: IntoPoolError + From<txpool_api::error::Error>,
 {
 	pool.ready()
@@ -616,7 +614,7 @@ where
 	C: network::ClientHandle<B> + Send + Sync,
 	Pool: 'static + TransactionPool<Block=B, Hash=H, Error=E>,
 	B: BlockT,
-	H: std::hash::Hash + Eq + sr_primitives::traits::Member + sr_primitives::traits::MaybeSerialize,
+	H: std::hash::Hash + Eq + sp_runtime::traits::Member + sp_runtime::traits::MaybeSerialize,
 	E: 'static + IntoPoolError + From<txpool_api::error::Error>,
 {
 	fn transactions(&self) -> Vec<(H, <B as BlockT>::Extrinsic)> {
@@ -680,7 +678,7 @@ mod tests {
 	use super::*;
 	use futures03::executor::block_on;
 	use consensus_common::SelectChain;
-	use sr_primitives::traits::BlindCheckable;
+	use sp_runtime::traits::BlindCheckable;
 	use substrate_test_runtime_client::{prelude::*, runtime::{Extrinsic, Transfer}};
 	use txpool::{BasicPool, FullChainApi};
 
