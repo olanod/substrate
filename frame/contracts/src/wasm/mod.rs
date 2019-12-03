@@ -36,6 +36,8 @@ use self::runtime::{to_execution_result, Runtime};
 use self::code_cache::load as load_code;
 
 pub use self::code_cache::save as save_code;
+pub use self::prepare::prepare_contract;
+pub use self::runtime::Env as EnvCheck;
 
 /// A prepared wasm module ready for execution.
 #[derive(Clone, Encode, Decode)]

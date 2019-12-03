@@ -102,6 +102,7 @@ mod tests;
 use crate::exec::ExecutionContext;
 use crate::account_db::{AccountDb, DirectAccountDb};
 use crate::wasm::{WasmLoader, WasmVm};
+pub use crate::wasm::{prepare_contract, EnvCheck};
 
 pub use crate::gas::{Gas, GasMeter};
 pub use crate::exec::{ExecResult, ExecReturnValue, ExecError, StatusCode};

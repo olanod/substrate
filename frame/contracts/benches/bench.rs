@@ -240,23 +240,28 @@ const WASMS: &[(&str, &[u8])] = &[
 fn test_flipper(c: &mut Criterion) {
 	let mut group = c.benchmark_group("wasms");
 
-	test_externalities().execute_with(|| {
-		let _ = Balances::deposit_creating(&ALICE, 1_000_000_000_000);
+	fn call_wasm_method<HF: wasm_interface::HostFunctions>(method: &str) -> runtime_io::TestExternalities {
+		let mut ext = runtime_io::TestExternalities::default();
+		let mut ext_ext = ext.ext();
 
-		for (name, bytes) in WASMS {
-			group.throughput(Throughput::Bytes(bytes.len() as u64));
+		executor::call_in_wasm::<
+			_,
+			(
+				HF,
+				runtime_io::SubstrateHostFunctions,
+				executor::deprecated_host_interface::SubstrateExternals
+			)
+		>(
+			method,
+			&[],
+			executor::WasmExecutionMethod::Interpreted,
+			&mut ext_ext,
+			&WASM_BINARY[..],
+			8,
+		).expect(&format!("Executes `{}`", method));
 
-			group.bench_function(BenchmarkId::from_parameter(name), |b| {
-				b.iter(|| {
-					assert_ok!(Contract::put_code(
-						Origin::signed(ALICE),
-						100_000,
-						black_box(bytes.to_vec())
-					));
-				})
-			});
-		}
-	});
+		ext
+	}
 }
 
 criterion_group!{

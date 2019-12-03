@@ -26,6 +26,7 @@ balances = { package = "pallet-balances", path = "../balances" }
 timestamp = { package = "pallet-timestamp", path = "../timestamp" }
 randomness-collective-flip = { package = "pallet-randomness-collective-flip", path = "../randomness-collective-flip" }
 criterion = "0.3"
+pallet-contracts-benchmark-wasm = {path = "benchmark-wasm", default-features = false}
 
 [features]
 default = ["std"]
