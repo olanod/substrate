@@ -21,11 +21,20 @@ use consensus_common::{
 	self, BlockImport, Environment, Proposer, BlockCheckParams,
 	ForkChoiceStrategy, BlockImportParams, BlockOrigin,
 	ImportResult, SelectChain,
+	import_queue::{
+		BasicQueue,
+		CacheKeyId,
+		Verifier,
+		BoxBlockImport
+	}
 };
-use consensus_common::import_queue::{BasicQueue, CacheKeyId, Verifier, BoxBlockImport};
-use sr_primitives::traits::Block as BlockT;
+use sp_runtime::{
+	traits::{Block as BlockT, Header as _},
+	generic::BlockId,
+	Justification
+};
 use client::blockchain::HeaderBackend;
-use sr_primitives::Justification;
+use client_api::backend::Backend as ClientBackend;
 use parking_lot::Mutex;
 use futures::prelude::*;
 use transaction_pool::txpool::{self, Pool as TransactionPool};
@@ -37,7 +46,7 @@ use std::time::Duration;
 pub mod rpc;
 
 use rpc::EngineCommand;
-use sr_api::BlockId;
+use hash_db::Hasher;
 
 /// The synchronous block-import worker of the engine.
 pub struct ManualSealBlockImport<I> {
@@ -90,6 +99,7 @@ impl<B: BlockT> Verifier<B> for ManualSealVerifier {
 			auxiliary: Vec::new(),
 			fork_choice: ForkChoiceStrategy::LongestChain,
 			allow_missing_state: false,
+			import_existing: false
 		};
 
 		Ok((import_params, None))
@@ -108,10 +118,10 @@ pub fn import_queue<B: BlockT>(block_import: BoxBlockImport<B>) -> BasicQueue<B>
 }
 
 /// Creates the background authorship task for the manual seal engine.
-pub async fn run_manual_seal<B, HB, E, A, C, S>(
+pub async fn run_manual_seal<B, CB, E, A, C, S, H>(
 	block_import: BoxBlockImport<B>,
 	env: E,
-	back_end: HB,
+	back_end: CB,
 	pool: Arc<TransactionPool<A>>,
 	mut seal_block_channel: S,
 	select_chain: C,
@@ -119,7 +129,8 @@ pub async fn run_manual_seal<B, HB, E, A, C, S>(
 )
 	where
 		B: BlockT + 'static,
-		HB: HeaderBackend<B> + 'static,
+		H: Hasher<Out=<B as BlockT>::Hash>,
+		CB: ClientBackend<B, H> + 'static,
 		E: Environment<B> + 'static,
 		A: txpool::ChainApi + 'static,
 		S: Stream<Item=EngineCommand<<B as BlockT>::Hash>> + Unpin + 'static,
@@ -154,7 +165,7 @@ pub async fn run_manual_seal<B, HB, E, A, C, S>(
 				// or fetch the best_block.
 				let header = parent_hash
 					.and_then(|hash| {
-						back_end.header(BlockId::Hash(hash)).ok()
+						back_end.blockchain().header(BlockId::Hash(hash)).ok()
 					})
 					.and_then(std::convert::identity)
 					.or_else(|| select_chain.best_chain().ok());
@@ -183,46 +194,56 @@ pub async fn run_manual_seal<B, HB, E, A, C, S>(
 				match result {
 					Ok(block) => {
 						let (header, body) = block.deconstruct();
+						let hash = header.hash();
 						let import_params = BlockImportParams {
 							origin: BlockOrigin::Own,
 							header,
 							justification: None,
 							post_digests: Vec::new(),
 							body: Some(body),
-							finalized: true,
+							finalized: false,
 							auxiliary: Vec::new(),
+							import_existing: false,
 							fork_choice: ForkChoiceStrategy::LongestChain,
 							allow_missing_state: false,
 						};
 
 						let res = block_import.lock()
 							.import_block(import_params, HashMap::new());
-						if let Err(e) = res {
-							log::warn!("Failed to import just-constructed block: {:?}", e);
+						match res {
+							Ok(ImportResult::Imported(_)) => log::info!("Successfully imported block {:?}", hash),
+							error => log::warn!("Failed to import just-constructed block: {:?}", error),
 						}
 					}
 					Err(e) => {
 						log::warn!("Failed to propose block: {:?}", e)
 					}
 				};
+			},
+			EngineCommand::FinalizeBlock { hash } => {
+				match back_end.finalize_block(BlockId::Hash(hash), None) {
+					Err(e) => log::warn!("Failed to finalize block {:?}", e),
+					Ok(()) => log::info!("Successfully finalized block: {}", hash)
+				}
 			}
 		}
 	}
 }
 
-pub async fn run_instant_seal<B, HB, E, A, C, S>(
+pub async fn run_instant_seal<B, CB, H, E, A, C, S>(
 	block_import: BoxBlockImport<B>,
 	env: E,
-	back_end: HB,
+	back_end: CB,
 	pool: Arc<TransactionPool<A>>,
 	select_chain: C,
 	inherent_data_providers: inherents::InherentDataProviders,
 )
 	where
-		B: BlockT + 'static,
-		HB: HeaderBackend<B> + 'static,
-		E: Environment<B> + 'static,
 		A: txpool::ChainApi + 'static,
+		B: BlockT + 'static,
+		CB: ClientBackend<B, H> + 'static,
+		E: Environment<B> + 'static,
+		H: Hasher<Out=<B as BlockT>::Hash>,
 		S: Stream<Item=EngineCommand<<B as BlockT>::Hash>> + 'static,
 		C: SelectChain<B> + 'static
 {

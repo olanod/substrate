@@ -17,7 +17,7 @@
 //! RPC interface for the ManualSeal Engine.
 use jsonrpc_core::{Result, Error, ErrorCode};
 use jsonrpc_derive::rpc;
-use futures::channel::mpsc;
+use futures::channel::mpsc::{self, TrySendError};
 
 /// The "engine" receives these messages over a channel
 pub enum EngineCommand<Hash> {
@@ -28,6 +28,10 @@ pub enum EngineCommand<Hash> {
 	SealNewBlock {
 		create_empty: bool,
 		parent_hash: Option<Hash>
+	},
+	/// Tells the engine to finalize the block with the supplied hash
+	FinalizeBlock {
+		hash: Hash
 	}
 }
 
@@ -38,6 +42,12 @@ pub trait ManualSealApi<Hash> {
 		&self,
 		create_empty: bool,
 		parent_hash: Option<Hash>
+	) -> Result<()>;
+
+	#[rpc(name = "engine_finalizeBlock")]
+	fn finalize_block(
+		&self,
+		hash: Hash,
 	) -> Result<()>;
 }
 
@@ -64,17 +74,25 @@ impl<Hash: Send + 'static> ManualSealApi<Hash> for ManualSeal<Hash> {
 				create_empty,
 				parent_hash
 			}
-		).map_err(|err| {
-			if err.is_disconnected() {
-				log::warn!("Received sealing request but Manual Sealing task has been dropped");
-			}
-
-			Error {
-				code: ErrorCode::ServerError(500),
-				message: "Server is shutting down".into(),
-				data: None
-			}
-		})?;
+		).map_err(map_error)?;
 		Ok(())
+	}
+
+	fn finalize_block(&self, hash: Hash) -> Result<()> {
+		self.import_block_channel.unbounded_send(EngineCommand::FinalizeBlock { hash })
+			.map_err(map_error)?;
+		Ok(())
+	}
+}
+
+fn map_error<H>(error: TrySendError<EngineCommand<H>>) -> Error {
+	if error.is_disconnected() {
+		log::warn!("Received sealing request but Manual Sealing task has been dropped");
+	}
+
+	Error {
+		code: ErrorCode::ServerError(500),
+		message: "Server is shutting down".into(),
+		data: None
 	}
 }
