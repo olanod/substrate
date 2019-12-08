@@ -15,11 +15,19 @@
 // along with Substrate.  If not, see <http://www.gnu.org/licenses/>.
 
 //! RPC interface for the ManualSeal Engine.
-use jsonrpc_core::{Result, Error, ErrorCode};
+use consensus_common::ImportedAux;
+use jsonrpc_core::{Error, ErrorCode};
 use jsonrpc_derive::rpc;
-use futures::channel::mpsc::{self, TrySendError};
+use futures::channel::{
+	mpsc::{self, TrySendError},
+	oneshot,
+};
+use futures::TryFutureExt;
 
-/// The "engine" receives these messages over a channel
+type FutureResult<T> = Box<dyn jsonrpc_core::futures::Future<Item = T, Error = Error> + Send>;
+type Sender<T> = Option<oneshot::Sender<std::result::Result<T, crate::Error>>>;
+
+/// message sent by rpc to the background authorship task
 pub enum EngineCommand<Hash> {
 	/// Tells the engine to propose a new block
 	///
@@ -27,28 +35,32 @@ pub enum EngineCommand<Hash> {
 	/// in the transaction pool
 	SealNewBlock {
 		create_empty: bool,
-		parent_hash: Option<Hash>
+		parent_hash: Option<Hash>,
+		sender: Sender<ImportedAux>,
 	},
 	/// Tells the engine to finalize the block with the supplied hash
 	FinalizeBlock {
-		hash: Hash
+		hash: Hash,
+		sender: Sender<()>,
 	}
 }
 
 #[rpc]
 pub trait ManualSealApi<Hash> {
+	/// Instructs the manual-seal background task to create a new block
 	#[rpc(name = "engine_createBlock")]
 	fn create_block(
 		&self,
 		create_empty: bool,
 		parent_hash: Option<Hash>
-	) -> Result<()>;
+	) -> FutureResult<ImportedAux>;
 
+	/// Instructs the manual-seal background task to finalize a block
 	#[rpc(name = "engine_finalizeBlock")]
 	fn finalize_block(
 		&self,
 		hash: Hash,
-	) -> Result<()>;
+	) -> FutureResult<()>;
 }
 
 /// A struct that implements the [`ManualSealApi`].
@@ -68,20 +80,79 @@ impl<Hash: Send + 'static> ManualSealApi<Hash> for ManualSeal<Hash> {
 		&self,
 		create_empty: bool,
 		parent_hash: Option<Hash>
-	) -> Result<()> {
-		self.import_block_channel.unbounded_send(
+	) -> FutureResult<ImportedAux> {
+		let (sender, receiver) = oneshot::channel();
+		let result = self.import_block_channel.unbounded_send(
 			EngineCommand::SealNewBlock {
 				create_empty,
-				parent_hash
+				parent_hash,
+				sender: Some(sender),
 			}
-		).map_err(map_error)?;
-		Ok(())
+		);
+		let future = async {
+			if let Err(e) = result {
+				return Err(map_error(e))
+			};
+
+			match receiver.await {
+				// all good
+				Ok(Ok(aux)) => Ok(aux),
+				// error from the authorship task
+				Ok(Err(e)) => {
+					Err(Error {
+						code: ErrorCode::ServerError(500),
+						message: format!("{}", e),
+						data: None
+					})
+				}
+				// channel has been dropped
+				Err(_) => {
+					Err(Error {
+						code: ErrorCode::ServerError(500),
+						message: "Server is shutting down".into(),
+						data: None
+					})
+				}
+			}
+		};
+
+		Box::new(Box::pin(future).compat())
 	}
 
-	fn finalize_block(&self, hash: Hash) -> Result<()> {
-		self.import_block_channel.unbounded_send(EngineCommand::FinalizeBlock { hash })
-			.map_err(map_error)?;
-		Ok(())
+	fn finalize_block(&self, hash: Hash) -> FutureResult<()> {
+		let (sender, receiver) = oneshot::channel();
+		let result = self.import_block_channel.unbounded_send(
+			EngineCommand::FinalizeBlock { hash, sender: Some(sender) }
+		);
+
+		let future = async {
+			if let Err(e) = result {
+				return Err(map_error(e))
+			};
+
+			match receiver.await {
+				// all good
+				Ok(Ok(())) => Ok(()),
+				// error from the authorship task
+				Ok(Err(e)) => {
+					Err(Error {
+						code: ErrorCode::ServerError(500),
+						message: format!("{}", e),
+						data: None
+					})
+				}
+				// channel has been dropped
+				Err(_) => {
+					Err(Error {
+						code: ErrorCode::ServerError(500),
+						message: "Server is shutting down".into(),
+						data: None
+					})
+				}
+			}
+		};
+
+		Box::new(Box::pin(future).compat())
 	}
 }
 
@@ -95,4 +166,14 @@ fn map_error<H>(error: TrySendError<EngineCommand<H>>) -> Error {
 		message: "Server is shutting down".into(),
 		data: None
 	}
+}
+
+pub fn send_result<T: std::fmt::Debug>(
+	sender: Sender<T>,
+	result: std::result::Result<T, crate::Error>
+) {
+	sender.map(|sender| {
+		sender.send(result)
+			.expect("receiving end isn't dropped until it receives a message; qed")
+	});
 }

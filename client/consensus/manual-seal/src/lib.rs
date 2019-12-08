@@ -25,18 +25,19 @@ use consensus_common::{
 		BasicQueue,
 		CacheKeyId,
 		Verifier,
-		BoxBlockImport
-	}
+		BoxBlockImport,
+	},
 };
 use sp_runtime::{
-	traits::{Block as BlockT, Header as _},
+	traits::Block as BlockT,
 	generic::BlockId,
-	Justification
+	Justification,
 };
-use client::blockchain::HeaderBackend;
+use sp_blockchain::HeaderBackend;
 use client_api::backend::Backend as ClientBackend;
 use parking_lot::Mutex;
 use futures::prelude::*;
+use hash_db::Hasher;
 use transaction_pool::txpool::{self, Pool as TransactionPool};
 
 use std::collections::HashMap;
@@ -44,9 +45,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub mod rpc;
+mod error;
 
-use rpc::EngineCommand;
-use hash_db::Hasher;
+pub use error::Error;
+pub use rpc::EngineCommand;
 
 /// The synchronous block-import worker of the engine.
 pub struct ManualSealBlockImport<I> {
@@ -99,7 +101,7 @@ impl<B: BlockT> Verifier<B> for ManualSealVerifier {
 			auxiliary: Vec::new(),
 			fork_choice: ForkChoiceStrategy::LongestChain,
 			allow_missing_state: false,
-			import_existing: false
+			import_existing: false,
 		};
 
 		Ok((import_params, None))
@@ -132,6 +134,8 @@ pub async fn run_manual_seal<B, CB, E, A, C, S, H>(
 		H: Hasher<Out=<B as BlockT>::Hash>,
 		CB: ClientBackend<B, H> + 'static,
 		E: Environment<B> + 'static,
+		E::Error: std::fmt::Display,
+		<E::Proposer as Proposer<B>>::Error: std::fmt::Display,
 		A: txpool::ChainApi + 'static,
 		S: Stream<Item=EngineCommand<<B as BlockT>::Hash>> + Unpin + 'static,
 		C: SelectChain<B> + 'static,
@@ -144,44 +148,49 @@ pub async fn run_manual_seal<B, CB, E, A, C, S, H>(
 	let back_end = Arc::new(back_end);
 
 	while let Some(command) = seal_block_channel.next().await {
-		let select_chain = select_chain.clone();
-		let env = env.clone();
-		let inherent_data_providers = inherent_data_providers.clone();
-		let block_import = block_import.clone();
-		let moved_pool = moved_pool.clone();
-		let back_end = back_end.clone();
-
 		match command {
 			EngineCommand::SealNewBlock {
 				create_empty,
-				parent_hash
+				parent_hash,
+				sender
 			} => {
 				if moved_pool.status().ready == 0 && !create_empty {
-					return;
+					return rpc::send_result(sender, Err(Error::EmptyTransactionPool));
 				}
 
-				// get the header to build this new block on
+				// get the header to build this new block on.
 				// use the parent_hash supplied via `EngineCommand`
 				// or fetch the best_block.
-				let header = parent_hash
-					.and_then(|hash| {
-						back_end.blockchain().header(BlockId::Hash(hash)).ok()
-					})
-					.and_then(std::convert::identity)
-					.or_else(|| select_chain.best_chain().ok());
+				let header = match parent_hash {
+					Some(hash) => {
+						back_end.blockchain().header(BlockId::Hash(hash))
+							.map_err(Error::from)
+							.and_then(|header| {
+								match header {
+									Some(header) => Ok(header),
+									None => Err(Error::BlockNotFound)
+								}
+							})
+					},
+					None => select_chain.best_chain().map_err(|e| e.into())
+				};
 
 				let header = match header {
-					None => return,
-					Some(hash) => hash,
+					Err(e) => return rpc::send_result(sender, Err(e)),
+					Ok(hash) => hash,
 				};
 
 				let mut proposer = match env.lock().init(&header) {
-					Err(_) => return,
+					Err(err) => {
+						return rpc::send_result(sender, Err(Error::ProposerError(format!("{}", err))));
+					}
 					Ok(p) => p,
 				};
 
 				let id = match inherent_data_providers.create_inherent_data() {
-					Err(_) => return,
+					Err(err) => {
+						return rpc::send_result(sender, Err(err.into()));
+					}
 					Ok(id) => id,
 				};
 
@@ -191,39 +200,50 @@ pub async fn run_manual_seal<B, CB, E, A, C, S, H>(
 					Duration::from_secs(5),
 				).await;
 
-				match result {
+				let params = match result {
 					Ok(block) => {
 						let (header, body) = block.deconstruct();
-						let hash = header.hash();
-						let import_params = BlockImportParams {
+						BlockImportParams {
 							origin: BlockOrigin::Own,
 							header,
 							justification: None,
 							post_digests: Vec::new(),
 							body: Some(body),
-							finalized: false,
+							finalized: true,
 							auxiliary: Vec::new(),
-							import_existing: false,
 							fork_choice: ForkChoiceStrategy::LongestChain,
 							allow_missing_state: false,
-						};
-
-						let res = block_import.lock()
-							.import_block(import_params, HashMap::new());
-						match res {
-							Ok(ImportResult::Imported(_)) => log::info!("Successfully imported block {:?}", hash),
-							error => log::warn!("Failed to import just-constructed block: {:?}", error),
+							import_existing: false,
 						}
 					}
+					Err(err) => return rpc::send_result(sender, Err(Error::ProposerError(format!("{}", err))))
+				};
+
+				let result = block_import.lock()
+					.import_block(params, HashMap::new());
+
+				match result {
+					Ok(ImportResult::Imported(aux)) => {
+						rpc::send_result(sender, Ok(aux))
+					}
+					Ok(other) => rpc::send_result(sender, Err(other.into())),
 					Err(e) => {
-						log::warn!("Failed to propose block: {:?}", e)
+						log::warn!("Failed to import block: {:?}", e);
+						rpc::send_result(sender, Err(e.into()))
 					}
 				};
-			},
-			EngineCommand::FinalizeBlock { hash } => {
+			}
+			EngineCommand::FinalizeBlock { hash, sender } => {
+				// TODO(seun): Justification support?
 				match back_end.finalize_block(BlockId::Hash(hash), None) {
-					Err(e) => log::warn!("Failed to finalize block {:?}", e),
-					Ok(()) => log::info!("Successfully finalized block: {}", hash)
+					Err(e) => {
+						log::warn!("Failed to finalize block {:?}", e);
+						rpc::send_result(sender, Err(e.into()))
+					}
+					Ok(()) => {
+						log::info!("Successfully finalized block: {}", hash);
+						rpc::send_result(sender, Ok(()))
+					}
 				}
 			}
 		}
@@ -243,6 +263,8 @@ pub async fn run_instant_seal<B, CB, H, E, A, C, S>(
 		B: BlockT + 'static,
 		CB: ClientBackend<B, H> + 'static,
 		E: Environment<B> + 'static,
+		E::Error: std::fmt::Display,
+		<E::Proposer as Proposer<B>>::Error: std::fmt::Display,
 		H: Hasher<Out=<B as BlockT>::Hash>,
 		S: Stream<Item=EngineCommand<<B as BlockT>::Hash>> + 'static,
 		C: SelectChain<B> + 'static
@@ -254,6 +276,7 @@ pub async fn run_instant_seal<B, CB, H, E, A, C, S>(
 			EngineCommand::SealNewBlock {
 				create_empty: false,
 				parent_hash: None,
+				sender: None,
 			}
 		});
 
@@ -267,3 +290,4 @@ pub async fn run_instant_seal<B, CB, H, E, A, C, S>(
 		inherent_data_providers,
 	).await
 }
+
