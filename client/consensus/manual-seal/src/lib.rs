@@ -35,10 +35,9 @@ use sp_runtime::{
 };
 use sp_blockchain::HeaderBackend;
 use client_api::backend::Backend as ClientBackend;
-use parking_lot::Mutex;
 use futures::prelude::*;
 use hash_db::Hasher;
-use transaction_pool::txpool::{self, Pool as TransactionPool};
+use transaction_pool::{BasicPool, txpool};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -121,10 +120,10 @@ pub fn import_queue<B: BlockT>(block_import: BoxBlockImport<B>) -> BasicQueue<B>
 
 /// Creates the background authorship task for the manual seal engine.
 pub async fn run_manual_seal<B, CB, E, A, C, S, H>(
-	block_import: BoxBlockImport<B>,
-	env: E,
-	back_end: CB,
-	pool: Arc<TransactionPool<A>>,
+	mut block_import: BoxBlockImport<B>,
+	mut env: E,
+	back_end: Arc<CB>,
+	basic_pool: Arc<BasicPool<A, B>>,
 	mut seal_block_channel: S,
 	select_chain: C,
 	inherent_data_providers: inherents::InherentDataProviders,
@@ -136,16 +135,11 @@ pub async fn run_manual_seal<B, CB, E, A, C, S, H>(
 		E: Environment<B> + 'static,
 		E::Error: std::fmt::Display,
 		<E::Proposer as Proposer<B>>::Error: std::fmt::Display,
-		A: txpool::ChainApi + 'static,
+		A: txpool::ChainApi<Block = B, Hash = <B as BlockT>::Hash> + 'static,
 		S: Stream<Item=EngineCommand<<B as BlockT>::Hash>> + Unpin + 'static,
 		C: SelectChain<B> + 'static,
 {
-	let block_import = Arc::new(Mutex::new(block_import));
-	let env = Arc::new(Mutex::new(env));
-	let select_chain = Arc::new(select_chain);
-	let inherent_data_providers = Arc::new(inherent_data_providers);
-	let moved_pool = pool.clone();
-	let back_end = Arc::new(back_end);
+	let pool = basic_pool.pool();
 
 	while let Some(command) = seal_block_channel.next().await {
 		match command {
@@ -154,7 +148,7 @@ pub async fn run_manual_seal<B, CB, E, A, C, S, H>(
 				parent_hash,
 				sender
 			} => {
-				if moved_pool.status().ready == 0 && !create_empty {
+				if pool.status().ready == 0 && !create_empty {
 					return rpc::send_result(sender, Err(Error::EmptyTransactionPool));
 				}
 
@@ -171,8 +165,8 @@ pub async fn run_manual_seal<B, CB, E, A, C, S, H>(
 									None => Err(Error::BlockNotFound)
 								}
 							})
-					},
-					None => select_chain.best_chain().map_err(|e| e.into())
+					}
+					None => select_chain.best_chain().map_err(Error::from)
 				};
 
 				let header = match header {
@@ -180,7 +174,7 @@ pub async fn run_manual_seal<B, CB, E, A, C, S, H>(
 					Ok(hash) => hash,
 				};
 
-				let mut proposer = match env.lock().init(&header) {
+				let mut proposer = match env.init(&header) {
 					Err(err) => {
 						return rpc::send_result(sender, Err(Error::ProposerError(format!("{}", err))));
 					}
@@ -219,7 +213,7 @@ pub async fn run_manual_seal<B, CB, E, A, C, S, H>(
 					Err(err) => return rpc::send_result(sender, Err(Error::ProposerError(format!("{}", err))))
 				};
 
-				let result = block_import.lock()
+				let result = block_import
 					.import_block(params, HashMap::new());
 
 				match result {
@@ -250,28 +244,27 @@ pub async fn run_manual_seal<B, CB, E, A, C, S, H>(
 	}
 }
 
-pub async fn run_instant_seal<B, CB, H, E, A, C, S>(
+pub async fn run_instant_seal<B, CB, H, E, A, C>(
 	block_import: BoxBlockImport<B>,
 	env: E,
-	back_end: CB,
-	pool: Arc<TransactionPool<A>>,
+	back_end: Arc<CB>,
+	basic_pool: Arc<BasicPool<A, B>>,
 	select_chain: C,
 	inherent_data_providers: inherents::InherentDataProviders,
 )
 	where
-		A: txpool::ChainApi + 'static,
+		A: txpool::ChainApi<Block = B, Hash = <B as BlockT>::Hash> + 'static,
 		B: BlockT + 'static,
 		CB: ClientBackend<B, H> + 'static,
 		E: Environment<B> + 'static,
 		E::Error: std::fmt::Display,
 		<E::Proposer as Proposer<B>>::Error: std::fmt::Display,
 		H: Hasher<Out=<B as BlockT>::Hash>,
-		S: Stream<Item=EngineCommand<<B as BlockT>::Hash>> + 'static,
 		C: SelectChain<B> + 'static
 {
 	// instant-seal creates blocks as soon as transactions are imported
 	// into the transaction pool.
-	let seal_block_channel = pool.import_notification_stream()
+	let seal_block_channel = basic_pool.pool().import_notification_stream()
 		.map(|_| {
 			EngineCommand::SealNewBlock {
 				create_empty: false,
@@ -284,10 +277,56 @@ pub async fn run_instant_seal<B, CB, H, E, A, C, S>(
 		block_import,
 		env,
 		back_end,
-		pool,
+		basic_pool,
 		seal_block_channel,
 		select_chain,
 		inherent_data_providers,
 	).await
 }
 
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use test_client::{DefaultTestClientBuilderExt, TestClientBuilderExt, AccountKeyring::*};
+	use transaction_pool::{
+		BasicPool,
+		txpool::Options,
+		test_helpers::*
+	};
+	use txpool_api::TransactionPool;
+	use client::LongestChain;
+	use inherents::InherentDataProviders;
+	use test_client;
+	use basic_authorship::ProposerFactory;
+
+	#[tokio::test]
+	async fn instant_seal() {
+		let builder = test_client::TestClientBuilder::new();
+		let backend = builder.backend();
+		let client = Arc::new(builder.build());
+		let select_chain = LongestChain::new(backend.clone());
+		let inherent_data_providers = InherentDataProviders::new();
+		let pool = Arc::new(BasicPool::new(Options::default(), TestApi::default()));
+		let env = ProposerFactory {
+			transaction_pool: pool.clone(),
+			client: client.clone()
+		};
+
+		let future = run_instant_seal(
+			Box::new(client.clone()),
+			env,
+			backend.clone(),
+			pool.clone(),
+			select_chain,
+			inherent_data_providers,
+		);
+		// spawn the background authorship task
+		tokio::spawn(future);
+
+		// submit transactions to pool.
+		let result = pool.submit_one(&BlockId::Number(1), uxt(Alice, 209)).await;
+		println!("import result: {:?}", result);
+		assert!(result.is_ok());
+		println!("{:?}", backend.blockchain().header(BlockId::Number(1)))
+	}
+}

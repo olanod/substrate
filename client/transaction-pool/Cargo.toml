@@ -18,7 +18,7 @@ txpool-api = { package = "sp-transaction-pool-api", path = "../../primitives/tra
 txpool-runtime-api = { package = "sp-transaction-pool-runtime-api", path = "../../primitives/transaction-pool/runtime-api" }
 client-api = { package = "sc-client-api", path = "../api" }
 sp-blockchain = { path = "../../primitives/blockchain" }
+test-client = { package = "substrate-test-runtime-client", path = "../../test/utils/runtime/client" }
 
 [dev-dependencies]
 keyring = { package = "sp-keyring", path = "../../primitives/keyring" }
-test-client = { package = "substrate-test-runtime-client", path = "../../test/utils/runtime/client" }

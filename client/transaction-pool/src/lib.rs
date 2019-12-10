@@ -25,6 +25,7 @@ mod maintainer;
 pub mod error;
 #[cfg(test)]
 mod tests;
+pub mod test_helpers;
 
 pub use txpool;
 pub use crate::api::{FullChainApi, LightChainApi};

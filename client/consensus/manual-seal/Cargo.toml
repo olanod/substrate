@@ -31,6 +31,7 @@ keystore = { package = "sc-keystore", path = "../../keystore" }
 client = { package = "sc-client", path = "../../../client" }
 client-api = { package = "sc-client-api", path = "../../../client/api" }
 sp-api = { path = "../../../primitives/sr-api" }
+basic-authorship = { package = "sc-basic-authority", path = "../../basic-authorship" }
 sp-blockchain = { path = "../../../primitives/blockchain" }
 block-builder-api = { package = "sp-block-builder", path = "../../../primitives/block-builder/runtime-api" }
 consensus-common = { package = "sp-consensus", path = "../../../primitives/consensus/common" }
@@ -38,6 +39,8 @@ slots = { package = "sc-consensus-slots", path = "../../consensus/slots"  }
 sp-runtime = {  path = "../../../primitives/sr-primitives" }
 fork-tree = { path = "../../../utils/fork-tree" }
 transaction-pool = { package = "sc-transaction-pool", path = "../../transaction-pool" }
+txpool-api = { package = "sp-transaction-pool-api", path = "../../../primitives/transaction-pool" }
+
 
 [dev-dependencies]
 keyring = { package = "sp-keyring", path = "../../../primitives/keyring" }
@@ -46,7 +49,7 @@ network = { package = "sc-network", path = "../../network", features = ["test-he
 service = { package = "sc-service", path = "../../service" }
 test-client = { package = "substrate-test-runtime-client", path = "../../../test/utils/runtime/client" }
 block-builder = { package = "sc-block-builder", path = "../../block-builder" }
-tokio = "0.1.22"
+tokio = { version = "0.2", features = ["rt-core", "macros"] }
 env_logger = "0.7.0"
 tempfile = "3.1.0"
 
