@@ -44,7 +44,7 @@ hex-literal = "0.3.1"
 sc-runtime-test = { version = "2.0.0", path = "runtime-test" }
 substrate-test-runtime = { version = "2.0.0", path = "../../test-utils/runtime" }
 sp-state-machine = { version = "0.8.0", path = "../../primitives/state-machine" }
-test-case = "0.3.3"
+test-case = "1.1.0"
 sp-runtime = { version = "2.0.0", path = "../../primitives/runtime" }
 sp-tracing = { version = "2.0.0", path = "../../primitives/tracing" }
 sc-tracing = { version = "2.0.0", path = "../tracing" }
