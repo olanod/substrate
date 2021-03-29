@@ -4265,7 +4265,7 @@ name = "node-rpc-client"
 version = "2.0.0"
 dependencies = [
  "futures 0.1.31",
- "hyper 0.12.36",
+ "hyper 0.13.10",
  "jsonrpc-core-client",
  "log",
  "node-primitives",
@@ -4627,22 +4627,6 @@ dependencies = [
  "frame-support",
  "frame-system",
  "pallet-balances",
- "parity-scale-codec 2.0.1",
- "serde",
- "sp-core",
- "sp-io",
- "sp-runtime",
- "sp-std",
-]
-
-[[package]]
-name = "pallet-assets-freezer"
-version = "3.0.0"
-dependencies = [
- "frame-benchmarking",
- "frame-support",
- "frame-system",
- "pallet-assets",
  "parity-scale-codec 2.0.1",
  "serde",
  "sp-core",
