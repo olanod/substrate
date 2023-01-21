@@ -541,7 +541,7 @@ name = "beefy-merkle-tree"
 version = "4.0.0-dev"
 dependencies = [
  "array-bytes",
- "env_logger",
+ "env_logger 0.10.0",
  "log",
  "sp-api",
  "sp-beefy",
@@ -1929,6 +1929,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "env_logger"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85cdab6a89accf66733ad5a1693a4dcced6aeff64602b634530dd73c1f3ee9f0"
+dependencies = [
+ "humantime",
+ "is-terminal",
+ "log",
+ "regex",
+ "termcolor",
+]
+
+[[package]]
 name = "environmental"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2022,7 +2035,7 @@ version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "21e16290574b39ee41c71aeb90ae960c504ebaf1e2a1c87bd52aa56ed6e1a02f"
 dependencies = [
- "env_logger",
+ "env_logger 0.9.3",
  "log",
 ]
 
@@ -5536,7 +5549,7 @@ dependencies = [
  "array-bytes",
  "assert_matches",
  "bitflags",
- "env_logger",
+ "env_logger 0.10.0",
  "frame-benchmarking",
  "frame-support",
  "frame-system",
@@ -5885,7 +5898,7 @@ name = "pallet-mmr"
 version = "4.0.0-dev"
 dependencies = [
  "array-bytes",
- "env_logger",
+ "env_logger 0.10.0",
  "frame-benchmarking",
  "frame-support",
  "frame-system",
@@ -8272,7 +8285,7 @@ dependencies = [
  "array-bytes",
  "assert_matches",
  "criterion",
- "env_logger",
+ "env_logger 0.10.0",
  "lru",
  "num_cpus",
  "parity-scale-codec",
@@ -8739,7 +8752,7 @@ name = "sc-rpc"
 version = "4.0.0-dev"
 dependencies = [
  "assert_matches",
- "env_logger",
+ "env_logger 0.10.0",
  "futures",
  "jsonrpsee",
  "log",
