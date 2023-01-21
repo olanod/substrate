@@ -18,7 +18,7 @@ sp-runtime = { version = "7.0.0", default-features = false, path = "../../../pri
 
 [dev-dependencies]
 array-bytes = "4.1"
-env_logger = "0.9"
+env_logger = "0.10"
 
 [features]
 debug = ["array-bytes", "log"]
