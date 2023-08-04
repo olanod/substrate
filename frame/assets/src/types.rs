@@ -129,7 +129,7 @@ where
 {
 	pub(crate) fn take_deposit(&mut self) -> Option<Balance> {
 		if !matches!(self, ExistenceReason::DepositHeld(_)) {
-			return None;
+			return None
 		}
 		if let ExistenceReason::DepositHeld(deposit) =
 			sp_std::mem::replace(self, ExistenceReason::DepositRefunded)
@@ -142,7 +142,7 @@ where
 
 	pub(crate) fn take_deposit_from(&mut self) -> Option<(AccountId, Balance)> {
 		if !matches!(self, ExistenceReason::DepositFrom(..)) {
-			return None;
+			return None
 		}
 		if let ExistenceReason::DepositFrom(depositor, deposit) =
 			sp_std::mem::replace(self, ExistenceReason::DepositRefunded)

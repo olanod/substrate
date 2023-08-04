@@ -334,7 +334,7 @@ impl<T: Config<I>, I: 'static> fungibles::InspectHold<T::AccountId> for Pallet<T
 		let ed = Asset::<T, I>::get(asset).map(|x| x.min_balance).unwrap();
 
 		if free.saturating_sub(total_hold) < ed {
-			return total_hold.saturating_sub(ed);
+			return total_hold.saturating_sub(ed)
 		}
 		total_hold
 	}
@@ -348,15 +348,15 @@ impl<T: Config<I>, I: 'static> fungibles::InspectHold<T::AccountId> for Pallet<T
 		let asset_details = Asset::<T, I>::get(asset.clone()).unwrap();
 		let holds = Holds::<T, I>::get(who, asset);
 		if !holds.is_full() && asset_details.is_sufficient == true {
-			return true;
+			return true
 		}
 
 		if frame_system::Pallet::<T>::providers(who) == 0 {
-			return false;
+			return false
 		}
 
 		if holds.is_full() && !holds.iter().any(|x| &x.id == reason) {
-			return false;
+			return false
 		}
 		true
 	}
@@ -403,7 +403,8 @@ impl<T: Config<I>, I: 'static> fungibles::UnbalancedHold<T::AccountId> for Palle
 			Account::<T, I>::insert(&asset, &who, new_account);
 		}
 
-		// Here the balance pallet calls try_mutate_account that calculates then dust. We should do something similar.
+		// Here the balance pallet calls try_mutate_account that calculates then dust. We should do
+		// something similar.
 		Holds::<T, I>::insert(who, asset, holds);
 		Ok(())
 	}
