@@ -21,7 +21,7 @@ use frame_support::{
 	defensive,
 	traits::tokens::{
 		Fortitude,
-		Precision::{self, BestEffort},
+		Precision::{self, Exact},
 		Preservation::{self, Expendable},
 		Provenance::{self, Minted},
 	},
@@ -53,10 +53,9 @@ impl<T: Config<I>, I: 'static> fungibles::Inspect<<T as SystemConfig>::AccountId
 		asset: Self::AssetId,
 		who: &<T as SystemConfig>::AccountId,
 		preservation: Preservation,
-		_: Fortitude,
+		force: Fortitude,
 	) -> Self::Balance {
-		Pallet::<T, I>::reducible_balance(asset, who, !matches!(preservation, Expendable))
-			.unwrap_or(Zero::zero())
+		Pallet::<T, I>::reducible_balance(asset, who, preservation, force).unwrap_or(Zero::zero())
 	}
 
 	fn can_deposit(
@@ -73,7 +72,12 @@ impl<T: Config<I>, I: 'static> fungibles::Inspect<<T as SystemConfig>::AccountId
 		who: &<T as SystemConfig>::AccountId,
 		amount: Self::Balance,
 	) -> WithdrawConsequence<Self::Balance> {
-		Pallet::<T, I>::can_decrease(asset, who, amount, false)
+		let f = DebitFlags {
+			preservation: Expendable,
+			precision: Precision::Exact,
+			force: Fortitude::Polite,
+		};
+		Pallet::<T, I>::can_decrease(asset, who, amount, &f)
 	}
 
 	fn asset_exists(asset: Self::AssetId) -> bool {
@@ -146,12 +150,9 @@ impl<T: Config<I>, I: 'static> fungibles::Unbalanced<T::AccountId> for Pallet<T,
 		amount: Self::Balance,
 		precision: Precision,
 		preservation: Preservation,
-		_: Fortitude,
+		force: Fortitude,
 	) -> Result<Self::Balance, DispatchError> {
-		let f = DebitFlags {
-			keep_alive: preservation != Expendable,
-			best_effort: precision == BestEffort,
-		};
+		let f = DebitFlags { preservation, precision, force: Fortitude::Polite };
 		Self::decrease_balance(asset, who, amount, f, |_, _| Ok(()))
 	}
 	fn increase_balance(
@@ -327,34 +328,24 @@ impl<T: Config<I>, I: 'static> fungibles::InspectHold<T::AccountId> for Pallet<T
 		_force: Fortitude,
 	) -> Self::Balance {
 		let total_hold = Self::total_balance_on_hold(asset.clone(), who);
-		let free = Account::<T, I>::get(asset.clone(), who)
-			.map(|account| account.balance)
-			.unwrap_or(Self::Balance::zero());
-		// take alternative of unwrap
-		let ed = Asset::<T, I>::get(asset).map(|x| x.min_balance).unwrap();
-
-		if free.saturating_sub(total_hold) < ed {
-			return total_hold.saturating_sub(ed)
-		}
+		// let free = fungibles::Inspect::reducible_balance(asset, who, Preserve, force);
 		total_hold
 	}
+
 	fn balance_on_hold(asset: T::AssetId, reason: &Self::Reason, who: &T::AccountId) -> T::Balance {
 		Holds::<T, I>::get(who, asset)
 			.iter()
 			.find(|x| &x.id == reason)
 			.map_or_else(Zero::zero, |x| x.amount)
 	}
-	fn hold_available(asset: T::AssetId, reason: &Self::Reason, who: &T::AccountId) -> bool {
-		let asset_details = Asset::<T, I>::get(asset.clone()).unwrap();
-		let holds = Holds::<T, I>::get(who, asset);
-		if !holds.is_full() && asset_details.is_sufficient == true {
-			return true
-		}
 
-		if frame_system::Pallet::<T>::providers(who) == 0 {
+	fn hold_available(asset: T::AssetId, reason: &Self::Reason, who: &T::AccountId) -> bool {
+		if frame_system::Pallet::<T>::providers(who) == 0 &&
+			frame_system::Pallet::<T>::sufficients(who) == 0
+		{
 			return false
 		}
-
+		let holds = Holds::<T, I>::get(who, asset);
 		if holds.is_full() && !holds.iter().any(|x| &x.id == reason) {
 			return false
 		}
@@ -385,7 +376,7 @@ impl<T: Config<I>, I: 'static> fungibles::UnbalancedHold<T::AccountId> for Palle
 		} else {
 			if !amount.is_zero() {
 				holds
-					.try_push(IdAmount { id: *reason, amount })
+					.try_push(IdAmount { id: reason.clone(), amount })
 					.map_err(|_| Error::<T, I>::TooManyHolds)?;
 			}
 		}

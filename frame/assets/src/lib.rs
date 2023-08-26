@@ -170,7 +170,13 @@ use frame_support::{
 	pallet_prelude::DispatchResultWithPostInfo,
 	storage::KeyPrefixIterator,
 	traits::{
-		tokens::{fungibles, DepositConsequence, WithdrawConsequence},
+		tokens::{
+			fungibles, DepositConsequence,
+			Fortitude::{self, Force},
+			Precision::{self, BestEffort},
+			Preservation::{self, Expendable},
+			WithdrawConsequence,
+		},
 		BalanceStatus::Reserved,
 		Currency, EnsureOriginWithArg, ReservableCurrency, StoredMap,
 	},
@@ -280,9 +286,6 @@ pub mod pallet {
 		/// attributes.
 		type ForceOrigin: EnsureOrigin<Self::RuntimeOrigin>;
 
-		/// The overarching hold reason.
-		type RuntimeHoldReason: Parameter + Member + MaxEncodedLen + Ord + Copy;
-
 		/// The basic amount of funds that must be reserved for an asset.
 		#[pallet::constant]
 		type AssetDeposit: Get<DepositBalanceOf<Self, I>>;
@@ -312,6 +315,9 @@ pub mod pallet {
 		/// The maximum number of holds that can exist on an account at any time.
 		#[pallet::constant]
 		type MaxHolds: Get<u32>;
+
+		/// The overarching hold reason.
+		type RuntimeHoldReason: Parameter + Member + MaxEncodedLen + Ord + Clone;
 
 		/// A hook to allow a per-asset, per-account minimum balance to be enforced. This must be
 		/// respected in all permissionless operations.
@@ -832,7 +838,7 @@ pub mod pallet {
 			let who = T::Lookup::lookup(who)?;
 			let id: T::AssetId = id.into();
 
-			let f = DebitFlags { keep_alive: false, best_effort: true };
+			let f = DebitFlags { precision: BestEffort, preservation: Expendable, force: Force };
 			let _ = Self::do_burn(id, &who, amount, Some(origin), f)?;
 			Ok(())
 		}

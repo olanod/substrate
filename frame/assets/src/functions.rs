@@ -18,7 +18,19 @@
 //! Functions for the Assets pallet.
 
 use super::*;
-use frame_support::{defensive, traits::Get, BoundedVec};
+use frame_support::{
+	defensive,
+	traits::{
+		fungibles::InspectHold,
+		tokens::{
+			Fortitude::{self, Polite},
+			Precision::{self, BestEffort},
+			Preservation::{self, Preserve, Protect},
+		},
+		Get,
+	},
+	BoundedVec,
+};
 
 #[must_use]
 pub(super) enum DeadConsequence {
@@ -162,7 +174,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
 		id: T::AssetId,
 		who: &T::AccountId,
 		amount: T::Balance,
-		keep_alive: bool,
+		f: &DebitFlags,
 	) -> WithdrawConsequence<T::Balance> {
 		use WithdrawConsequence::*;
 		let details = match Asset::<T, I>::get(&id) {
@@ -186,7 +198,8 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
 			return Frozen
 		}
 		if let Some(rest) = account.balance.checked_sub(&amount) {
-			if let Some(frozen) = T::Freezer::frozen_balance(id.clone(), who) {
+			if let (Some(frozen), Polite) = (T::Freezer::frozen_balance(id.clone(), who), f.force) {
+				dbg!((&amount, &frozen, &rest));
 				match frozen.checked_add(&details.min_balance) {
 					Some(required) if rest < required => return Frozen,
 					None => return Overflow,
@@ -195,7 +208,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
 			}
 
 			if rest < details.min_balance {
-				if keep_alive {
+				if f.keep_alive() {
 					WouldDie
 				} else {
 					ReducedToZero(rest)
@@ -213,7 +226,8 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
 	pub(super) fn reducible_balance(
 		id: T::AssetId,
 		who: &T::AccountId,
-		keep_alive: bool,
+		preservation: Preservation,
+		force: Fortitude,
 	) -> Result<T::Balance, DispatchError> {
 		let details = Asset::<T, I>::get(&id).ok_or(Error::<T, I>::Unknown)?;
 		ensure!(details.status == AssetStatus::Live, Error::<T, I>::AssetNotLive);
@@ -221,20 +235,18 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
 		let account = Account::<T, I>::get(&id, who).ok_or(Error::<T, I>::NoAccount)?;
 		ensure!(!account.status.is_frozen(), Error::<T, I>::Frozen);
 
-		let amount = if let Some(frozen) = T::Freezer::frozen_balance(id, who) {
-			// Frozen balance: account CANNOT be deleted
-			let required =
-				frozen.checked_add(&details.min_balance).ok_or(ArithmeticError::Overflow)?;
-			account.balance.saturating_sub(required)
-		} else {
-			if keep_alive {
-				// We want to keep the account around.
-				account.balance.saturating_sub(details.min_balance)
-			} else {
-				// Don't care if the account dies
-				account.balance
-			}
-		};
+		let mut required = Zero::zero();
+		if let (Polite, Some(f)) = (force, T::Freezer::frozen_balance(id.clone(), who)) {
+			required = f
+				// .saturating_add(details.min_balance)
+				.saturating_sub(Self::total_balance_on_hold(id, who));
+		}
+
+		if preservation == Preserve || preservation == Protect && !account.balance.is_zero() {
+			required = required.saturating_add(details.min_balance);
+		}
+		let amount = account.balance.saturating_sub(required);
+
 		Ok(amount.min(details.supply))
 	}
 
@@ -259,14 +271,15 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
 		amount: T::Balance,
 		f: DebitFlags,
 	) -> Result<T::Balance, DispatchError> {
-		let actual = Self::reducible_balance(id.clone(), target, f.keep_alive)?.min(amount);
-		ensure!(f.best_effort || actual >= amount, Error::<T, I>::BalanceLow);
+		let actual =
+			Self::reducible_balance(id.clone(), target, f.preservation, f.force)?.min(amount);
+		ensure!(f.precision == BestEffort || actual >= amount, Error::<T, I>::BalanceLow);
 
-		let conseq = Self::can_decrease(id, target, actual, f.keep_alive);
-		let actual = match conseq.into_result(f.keep_alive) {
+		let conseq = Self::can_decrease(id, target, actual, &f);
+		let actual = match conseq.into_result(f.keep_alive()) {
 			Ok(dust) => actual.saturating_add(dust), //< guaranteed by reducible_balance
 			Err(e) => {
-				debug_assert!(false, "passed from reducible_balance; qed");
+				debug_assert!(false, "{e:?} passed from reducible_balance; qed");
 				return Err(e)
 			},
 		};

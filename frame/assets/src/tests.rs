@@ -23,8 +23,13 @@ use frame_support::{
 	assert_noop, assert_ok,
 	dispatch::GetDispatchInfo,
 	traits::{
-		fungibles::InspectEnumerable,
-		tokens::{Fortitude::Polite, Precision::Exact, Preservation::Protect},
+		fungibles::{InspectEnumerable, InspectHold, MutateHold},
+		tokens::{
+			Fortitude::{Force, Polite},
+			Precision::{BestEffort, Exact},
+			Preservation::Protect,
+			Restriction::Free,
+		},
 		Currency,
 	},
 };
@@ -1778,6 +1783,54 @@ fn asset_destroy_refund_existence_deposit() {
 		assert_eq!(Balances::reserved_balance(&account3), 0);
 		assert_eq!(Balances::reserved_balance(&admin), 0);
 	});
+}
+
+#[test]
+fn freezing_and_holds_should_overlap() {
+	new_test_ext().execute_with(|| {
+		set_frozen_balance(999, 1, 99);
+		assert_ok!(Assets::hold(999, &TestId::Foo, &1, 90));
+		assert_eq!(Assets::balance(999, &1), 10);
+		assert_eq!(System::consumers(&1), 1);
+		assert_eq!(Assets::total_balance_on_hold(999, &1), 90);
+	})
+}
+
+#[test]
+fn frozen_hold_balance_cannot_be_moved_without_force() {
+	new_test_ext().execute_with(|| {
+		set_frozen_balance(999, 1, 99);
+		assert_ok!(Assets::hold(999, &TestId::Foo, &1, 90));
+		assert_eq!(Assets::reducible_total_balance_on_hold(999, &1, Force), 90);
+		assert_eq!(Assets::reducible_total_balance_on_hold(999, &1, Polite), 0);
+		assert_noop!(
+			Assets::transfer_on_hold(999, &TestId::Foo, &1, &2, 1, Exact, Free, Polite),
+			TokenError::Frozen
+		);
+		assert_ok!(Assets::transfer_on_hold(999, &TestId::Foo, &1, &2, 1, Exact, Free, Force));
+	})
+}
+
+#[test]
+fn frozen_hold_balance_best_effort_transfer_works() {
+	new_test_ext().execute_with(|| {
+		set_frozen_balance(999, 1, 50);
+		assert_ok!(Assets::hold(999, &TestId::Foo, &1, 90));
+		assert_eq!(Assets::reducible_total_balance_on_hold(999, &1, Force), 90);
+		assert_eq!(Assets::reducible_total_balance_on_hold(999, &1, Polite), 50);
+		assert_ok!(Assets::transfer_on_hold(
+			999,
+			&TestId::Foo,
+			&1,
+			&2,
+			1,
+			BestEffort,
+			Free,
+			Polite
+		));
+		assert_eq!(Assets::balance(999, &1), 50);
+		assert_eq!(Assets::balance(999, &2), 50);
+	})
 }
 
 #[test]

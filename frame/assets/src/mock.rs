@@ -24,13 +24,12 @@ use codec::{Decode, Encode, MaxEncodedLen};
 use frame_support::{
 	construct_runtime, parameter_types,
 	traits::{AsEnsureOriginWithArg, ConstU32, ConstU64},
-	RuntimeDebug,
 };
 use sp_core::H256;
 use sp_io::storage;
 use sp_runtime::{
 	traits::{BlakeTwo256, IdentityLookup},
-	BuildStorage,
+	BuildStorage, RuntimeDebug,
 };
 
 type Block = frame_system::mocking::MockBlock<Test>;
@@ -135,7 +134,6 @@ impl AssetsCallbackHandle {
 #[derive(
 	Encode,
 	Decode,
-	Copy,
 	Clone,
 	Eq,
 	PartialEq,
@@ -170,7 +168,7 @@ impl Config for Test {
 	type CallbackHandle = AssetsCallbackHandle;
 	type Extra = ();
 	type RemoveItemsLimit = ConstU32<5>;
-	type MaxHolds = ConstU32<500>;
+	type MaxHolds = ConstU32<2>;
 	type RuntimeHoldReason = TestId;
 	#[cfg(feature = "runtime-benchmarks")]
 	type BenchmarkHelper = ();
