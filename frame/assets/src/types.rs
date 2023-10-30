@@ -20,7 +20,15 @@
 use super::*;
 use frame_support::{
 	pallet_prelude::*,
-	traits::{fungible, tokens::ConversionToAssetBalance},
+	traits::{
+		fungible,
+		tokens::{
+			ConversionToAssetBalance,
+			Fortitude::{self, Polite},
+			Precision::{self, BestEffort, Exact},
+			Preservation::{self, Expendable, Preserve, Protect},
+		},
+	},
 };
 use sp_runtime::{traits::Convert, FixedPointNumber, FixedU128};
 
@@ -85,6 +93,15 @@ pub struct Approval<Balance, DepositBalance> {
 	pub(super) amount: Balance,
 	/// The amount reserved on the owner's account to hold this item in storage.
 	pub(super) deposit: DepositBalance,
+}
+
+/// An identifier and balance.
+#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
+pub struct IdAmount<Id, Balance> {
+	/// An identifier for this item.
+	pub id: Id,
+	/// Some amount for this item.
+	pub amount: Balance,
 }
 
 #[test]
@@ -248,18 +265,29 @@ pub(super) struct TransferFlags {
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) struct DebitFlags {
-	/// The debited account must stay alive at the end of the operation; an error is returned if
-	/// this cannot be achieved legally.
-	pub(super) keep_alive: bool,
 	/// Less than the amount specified needs be debited by the operation for it to be considered
 	/// successful. If `false`, then the amount debited will always be at least the amount
 	/// specified.
-	pub(super) best_effort: bool,
+	pub(super) precision: Precision,
+	/// The debited account must stay alive at the end of the operation; an error is returned if
+	/// this cannot be achieved legally.
+	pub(super) preservation: Preservation,
+	pub(super) force: Fortitude,
+	// pub(super) keep_alive: bool,
+	// pub(super) best_effort: bool,
+}
+
+impl DebitFlags {
+	pub(super) fn keep_alive(&self) -> bool {
+		self.preservation != Expendable
+	}
 }
 
 impl From<TransferFlags> for DebitFlags {
 	fn from(f: TransferFlags) -> Self {
-		Self { keep_alive: f.keep_alive, best_effort: f.best_effort }
+		let precision = if f.best_effort { BestEffort } else { Exact };
+		let preservation = if f.keep_alive { Protect } else { Expendable };
+		Self { precision, preservation, force: Polite }
 	}
 }
 
